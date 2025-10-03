@@ -1,114 +1,60 @@
-# vulnerable_login_demo.py
-# Run: python vulnerable_login_demo.py
-# WARNING: intentionally insecure — for testing only.
-
-from flask import Flask, request, redirect, make_response, g
+# tiny_vulnerable_login.py
+# WARNING: intentionally insecure — for learning only.
+from flask import Flask, request, make_response, redirect
 import sqlite3
-import requests  # used unsafely below for avatar fetch (SSRF demonstration)
-
-DATABASE = "insecure_users.db"
 
 app = Flask(__name__)
-app.config["DEBUG"] = True  # SECURITY: debug mode enabled
+app.config["DEBUG"] = True  # SECURITY MISCONFIGURATION: debug enabled
 
-# --- DB setup (stores plaintext passwords) ---
-def get_db():
-    db = getattr(g, "_db", None)
-    if db is None:
-        db = g._db = sqlite3.connect(DATABASE)
-    return db
+DB = "small.db"
 
 def init_db():
-    db = sqlite3.connect(DATABASE)
+    db = sqlite3.connect(DB)
     cur = db.cursor()
-    # plaintext password field
-    cur.execute(
-        "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT)"
-    )
-    # insert a user (password in cleartext)
+    cur.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT)")
+    # plaintext password inserted on purpose
     try:
-        cur.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ("alice", "password123", "user"))
+        cur.execute("INSERT INTO users (username, password) VALUES ('bob', 'secret123')")
         db.commit()
     except Exception:
         pass
     db.close()
 
-# --- Vulnerable login endpoint ---
+def get_db():
+    return sqlite3.connect(DB)
+
 @app.route("/login", methods=["POST"])
 def login():
     username = request.form.get("username", "")
     password = request.form.get("password", "")
 
-    # INJECTION: unsafely building SQL with string formatting (SQLi)
-    # vulnerable_line:
-    query = f"SELECT id, username, password, role FROM users WHERE username = '{username}'"
+    # INJECTION: vulnerable to SQL injection because username is interpolated directly
+    q = f"SELECT id, password FROM users WHERE username = '{username}'"
     cur = get_db().cursor()
-    cur.execute(query)  # vulnerable to SQL injection if username contains quotes
+    cur.execute(q)
     row = cur.fetchone()
-
     if not row:
-        return "No such user", 401
+        return "Unknown user", 401
 
-    user_id, user_name, stored_password, role = row
+    user_id, stored_password = row
 
-    # CRYPTOGRAPHIC FAILURES: comparing plaintext passwords; no hashing/salting
+    # CRYPTOGRAPHIC FAILURES: comparing plaintext passwords (no hashing)
     if password != stored_password:
-        return "Invalid credentials", 403
+        return "Bad credentials", 403
 
-    # IDENTIFICATION & AUTH FAILURES / BROKEN ACCESS CONTROL:
-    # - We set a trivial session cookie containing user id (no signing, no HttpOnly/secure flags)
-    resp = make_response(redirect("/profile"))
-    resp.set_cookie("session_id", str(user_id))  # predictable, unsigned cookie
-
-    # SECURITY MISCONFIGURATION: CORS, cookies not secure, debug True above
-
+    # BROKEN ACCESS CONTROL / AUTH: trivial unsigned cookie used as session token
+    resp = make_response(redirect("/welcome"))
+    resp.set_cookie("session", str(user_id))  # predictable, no HttpOnly/Secure flags
     return resp
 
-# --- Profile endpoint (no auth checks, simple cookie-based) ---
-@app.route("/profile")
-def profile():
-    # BROKEN ACCESS CONTROL: no verification of cookie ownership or role checks
-    sid = request.cookies.get("session_id")
+@app.route("/welcome")
+def welcome():
+    sid = request.cookies.get("session")
     if not sid:
         return redirect("/login_page")
-
-    # Insecure: no input validation, treat sid as int without try/except
-    cur = get_db().cursor()
-    cur.execute(f"SELECT username, role FROM users WHERE id = {sid}")  # SQLi if sid manipulated
-    row = cur.fetchone()
-    if not row:
-        return "Unknown session", 401
-
-    username, role = row
-
-    # SSRF demonstration: user can set ?avatar=<url> and server will fetch it without validation
-    avatar_url = request.args.get("avatar")
-    avatar_data = None
-    if avatar_url:
-        try:
-            # UNSAFE: server-side request to arbitrary URL (SSRF)
-            r = requests.get(avatar_url, timeout=2)
-            avatar_data = r.content[:100]  # we just peek at some bytes
-        except Exception:
-            avatar_data = b"fetch-failed"
-
-    return (
-        f"Hello {username} (role={role})\n"
-        f"Avatar peek: {bool(avatar_data)}\n"
-    )
-
-# --- Admin-only action but no RBAC enforced ---
-@app.route("/admin/delete_user", methods=["POST"])
-def delete_user():
-    # Insecure: trusting 'role' parameter from client (can be spoofed)
-    role = request.form.get("role")
-    target = request.form.get("username")
-    # NO CHECK that current user is an admin
-    db = get_db()
-    db.cursor().execute("DELETE FROM users WHERE username = ?", (target,))
-    db.commit()
-    return f"Deleted {target} (requested by role={role})"
+    # NO validation: user can set any cookie value and access this page
+    return f"Hello user id {sid} (insecure session!)"
 
 if __name__ == "__main__":
     init_db()
-    app.run(port=5001)
+    app.run(port=5002)
