@@ -1,10 +1,30 @@
-# buggy_login.py
+# secure_login.py
 
+import hashlib
+import logging
+
+# Configure logging for authentication attempts
+logging.basicConfig(level=logging.INFO, filename='auth.log', format='%(asctime)s - %(message)s')
+
+# Securely hashed credentials for comparison
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD_HASH = hashlib.sha256("1234".encode()).hexdigest()
+
+def authenticate_user(username, password):
+    # Hash the password provided by the user
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+
+    # Compare securely hashed values
+    if username == ADMIN_USERNAME and password_hash == ADMIN_PASSWORD_HASH:
+        logging.info(f"Login successful for user: {username}")
+        return "Login successful!"
+    else:
+        logging.warning(f"Access denied for user: {username}")
+        return "Access denied!"
+
+# Get user input
 username = input("Enter username: ")
 password = input("Enter password: ")
 
-# BAD: direct string comparison without hashing/sanitization
-if username == "admin" and password == "1234":
-    print("Login successful!")
-else:
-    print("Access denied!")
+# Authenticate user
+print(authenticate_user(username, password))
