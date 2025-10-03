@@ -1,7 +1,5 @@
-# tiny_vulnerable_login.py
-# WARNING: intentionally insecure — for learning only.
-from flask import Flask, request, make_response, redirect
 import sqlite3
+from flask import Flask, request, make_response, redirect
 
 app = Flask(__name__)
 app.config["DEBUG"] = True  # SECURITY MISCONFIGURATION: debug enabled
